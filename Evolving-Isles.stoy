@@ -32,6 +32,7 @@ uniform vec4      iMouse;                // mouse pixel coords. xy: current (if 
 uniform vec4      iDate;                 // (year, month, day, time in seconds)
 uniform float     iSampleRate;           // sound sample rate (i.e., 44100)
 
+uniform sampler2D depthTex;			 //! depthmap[]
 
 // All noise and fbm from iq
 
@@ -167,8 +168,11 @@ float inverseRidgedMultifractal(vec3 p)
 float terrain( vec3 p )
 {
     float terrain = 0.0;
-    
-    terrain += 0.95*fbm( p * vec3(1.0, 0.2, 0.2))*0.5+0.5; p = p*2.01;
+    //float h = fbm( p * vec3(1.0, 0.2, 0.2))*0.5+0.5;
+	float h = texture(depthTex, p.yz * 0.1).r;
+
+    terrain += 0.95 * h;
+    p = p*2.01;
     terrain += 0.05*inverseRidgedMultifractal( p );
     
     return terrain;
@@ -227,11 +231,11 @@ vec3 colorize( float n )
 
 void mainImage( inout vec4 fragColor, in vec2 fragCoord )
 {
-	vec2 uv = fragCoord.xy / iResolution.xy*1.0-0.5;
-    uv.x*=(iResolution.x/iResolution.y);
+	vec2 uv = fragCoord.xy / iResolution.xy;
+    //uv.x *= (iResolution.x/iResolution.y);
     float mx = iMouse.x>0.0?iMouse.x/iResolution.x:0.5;
     float my = iMouse.y>0.0?iMouse.y/iResolution.y:0.5;
-	uv*=my*10.0;
+	uv *= 10.0;
     
     float n = 0.0;
     if(uv.x < (fragCoord.x / iResolution.x*1.0-0.5)*2.0)
