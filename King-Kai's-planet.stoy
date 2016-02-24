@@ -35,7 +35,6 @@ uniform vec4      iMouse;                // mouse pixel coords. xy: current (if 
 uniform vec4      iDate;                 // (year, month, day, time in seconds)
 uniform float     iSampleRate;           // sound sample rate (i.e., 44100)
 
-uniform sampler2D depthTex;			 	 //! depthmap[]
 
 #define CHANGE_SPEED 0.1				/* terrain changing speed */
 #define VIEW_SCOPE   0.13				/* view scope. */
@@ -247,12 +246,8 @@ float snoise(vec3 v)
 }
 
 float terrain_map( vec3 p ) {
-    //vec3 drpz = vec3(p.xz * VIEW_SCOPE, iGlobalTime * CHANGE_SPEED);
-	//return p.y - snoise(drpz);
-	p /= 16;
-	p += 1.0; p *= 0.5;
-	float d = texture(depthTex, p.xz).r;
-	return p.y - .4 * d;
+    vec3 drpz = vec3(p.xz * VIEW_SCOPE, iGlobalTime * CHANGE_SPEED);
+	return p.y - snoise(drpz);
 }
 
 float map( vec3 p)
@@ -317,23 +312,15 @@ void setConfig(){
 
 void initWorldCoords(in vec2 fragCoord) {
     uv = fragCoord.xy / iResolution.xy;
-    uv = uv * 2.0 - 1.0;
-    uv *= 16;
-    /*
-    cameraOrigin = vec3(0, 8, 0);
-    //cameraOrigin = vec3(uv.x, 12, uv.y);
-    vec3 cameraTarget = vec3(uv.x, 0.0, uv.y);
+	uv = 2. * uv - 1.;
+	uv.x *= iResolution.x/iResolution.y;
+    cameraOrigin = vec3(0.0, 4, -12);
+	vec3 cameraTarget = vec3(0, 0.0, 0);
 	vec3 upDirection = vec3(0.0, -1.0, 0.0);
 	vec3 cameraDir = normalize(cameraTarget - cameraOrigin);
 	vec3 cameraRight = normalize(cross(upDirection, cameraOrigin));
 	vec3 cameraUp = cross(cameraDir, cameraRight);
     rayDir = normalize(cameraRight * uv.x + cameraUp * uv.y + cameraDir);
-    */
-    vec3 right = vec3(1, 0, 0);
-	vec3 front = vec3(0, 0, 1);
-	cameraOrigin = right * uv.x + front * uv.y;
-	cameraOrigin.y += 6.0;
-    rayDir = normalize(cross(right, front));
 }
 
 void mainImage( inout vec4 fragColor, in vec2 fragCoord )
