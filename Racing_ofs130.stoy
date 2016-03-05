@@ -6,7 +6,7 @@ uniform vec4      iMouse;                // mouse pixel coords. xy: current (if 
 uniform vec4      iDate;                 // (year, month, day, time in seconds)
 uniform float     iSampleRate;           // sound sample rate (i.e., 44100)
 
-uniform sampler2D depthTex;			 	 //! depthmap[]
+uniform sampler2D depthTex[2];			 	 //! depthmap[]
 
 #define CHANGE_SPEED 0.1				/* terrain changing speed */
 #define VIEW_SCOPE   0.13				/* view scope. */
@@ -224,7 +224,7 @@ float snoise(vec3 p)
 	p.xy += 1.0;
 	p.xy *= 0.5;
 
-	depth = texture(depthTex, p.xy).r;
+	depth = texture(depthTex[0], p.xy).r;
 
 	return depth * 5;
 }
