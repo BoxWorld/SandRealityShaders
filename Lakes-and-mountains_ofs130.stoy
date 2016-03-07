@@ -1,0 +1,215 @@
+uniform vec3 iResolution;           // viewport resolution (in pixels)
+uniform float iGlobalTime;          // shader playback time (in seconds)
+uniform float iChannelTime[4];      // channel playback time (in seconds)
+uniform vec3 iChannelResolution[4]; // channel resolution (in pixels)
+uniform vec4 iMouse;                // mouse pixel coords. xy: current (if MLB down), zw: click
+uniform vec4 iDate;                 // (year, month, day, time in seconds)
+uniform sampler2D iChannel0; //! texture["Shadertoy/res/tex16.png"]
+
+uniform float z_pos;				//! slider[-2, 0.182, 2];
+uniform float h_ratio;				//! slider[0, 0.1, 1];
+
+uniform sampler2D depthTex;			//! depthmap[]
+
+#define HEIGHT_RATIO 0.1
+
+#define SHADOW_ITERS 10
+#define SHADOW_QUALITY 3.0
+#define REFLECTION_ITERS 50
+#define REFLECTION_QUALITY 5.0
+
+#define LINEAR_ITERS 80
+#define BINARY_ITERS 11
+#define LINEAR_ACCURACY 0.8
+#define LINEAR_DISTANCE_RATIO 0.2
+#define FOG_BASE 0.06
+
+vec3 cameraOrigin, rayDir;
+
+/* ################### */
+float scene(vec3 pos) {
+	vec2 p = pos.xz / iResolution.xy;
+	//p.x /= iResolution.x/iResolution.y;
+	float d = texture(depthTex, p.xy).r;
+	//d -= 0.5;
+	d *= 100;
+	return pos.y - d;
+}
+
+float sceneHigh(vec3 pos) {
+	vec2 p = pos.xz / iResolution.xy;
+	//p.x /= iResolution.x/iResolution.y;
+	float d = texture(depthTex, p.xy).r;
+	//d -= 0.5;
+	d *= 100;
+	return pos.y - d;
+}
+
+vec3 normal(vec3 x) {
+	const vec2 eps = vec2(0.1, 0.0);
+	float h = scene(x);
+	return normalize(vec3(
+		(scene(x+eps.xyy)-h),
+		(scene(x+eps.yxy)-h),
+		(scene(x+eps.yyx)-h)
+	));
+}
+
+vec3 normalHigh(vec3 x) {
+	const vec2 eps = vec2(0.05, 0.0);
+	float h = sceneHigh(x);
+	return normalize(vec3(
+		(sceneHigh(x+eps.xyy)-h),
+		(sceneHigh(x+eps.yxy)-h),
+		(sceneHigh(x+eps.yyx)-h)
+	));
+}
+
+float shadow(vec3 rpos, vec3 rdir) {
+	float t = 1.0;
+	float sh = 1.0;
+
+	for (int i = 0; i < SHADOW_ITERS; i++) {
+		vec3 pos = rpos + rdir * t;
+		float h = scene(pos);
+		if (h < 0.01) return 0.0;
+		sh = min(sh, h/t*8.0);
+		t += max(h, SHADOW_QUALITY);
+	}
+
+	return sh;
+}
+const float waterHeight = 100.0;
+const vec3 lightDir = vec3(0.819232, 0.573462, 0.);
+
+vec3 calculateFogColor(vec3 rpos, vec3 rdir) {
+	vec3 col = mix(vec3(0.3, 0.5, 0.7), vec3(0.0, 0.05, 0.1), clamp(rdir.y*2.5, 0.0, 1.0));
+	col += pow(dot(lightDir, rdir) * 0.5 + 0.5, 2.0) * vec3(0.3, 0.2, 0.1);
+	return col;
+}
+
+vec3 shade(vec3 rpos, vec3 rdir, float t, vec3 pos) {
+	float watert = ((rpos.y - waterHeight-820.0) / rdir.y);
+
+	// Calculate fog
+	float b = 0.01;
+	float fogt = min(watert, t);
+	float fog = 1.0 - FOG_BASE * exp(-rpos.y*b) * (1.0-exp(-fogt*rdir.y*b)) / rdir.y;
+	vec3 fogColor = calculateFogColor(rpos, rdir);
+
+	vec4 ns = texture2D(iChannel0, pos.xz * 0.0001);
+
+	if (fog < 0.01) return fogColor;
+
+	vec3 nl = normal(pos);
+	vec3 n = normalHigh(pos);
+	float h = pos.y;
+
+	float slope = n.y;
+	vec3 albedo = vec3(0.36, 0.25, 0.15);
+
+	// Apply texture_ above water
+	if (watert > t) {
+		float snowThresh = 1.0 - smoothstep(-50.0, -40.0, h) * 0.4 + 0.1;
+		float grassThresh = smoothstep(-70.0, -50.0, h) * 0.3 + 0.75;
+
+		if (nl.y < 0.65)
+			albedo = mix(albedo, vec3(0.65, 0.6, 0.5), smoothstep(0.65,0.55,nl.y));
+		if (slope > grassThresh - 0.05)
+			albedo = mix(albedo, vec3(0.4, 0.6, 0.2), smoothstep(grassThresh-0.05,grassThresh+0.05,slope));
+		if (slope > snowThresh - 0.05)
+			albedo = mix(albedo, vec3(1.0, 1.0, 1.0), smoothstep(snowThresh-0.05,snowThresh+0.05,slope));
+	}
+
+	// Fade in 'beach' and add a bit of noise
+	albedo = mix(albedo, vec3(0.6, 0.5, 0.2), smoothstep(-waterHeight+4.0,-waterHeight+0.5,h));
+
+	// Lighting
+	float diffuse = clamp(dot(n, lightDir), 0.0, 1.0);
+	#ifdef SHADOWS
+	if (diffuse > 0.005) diffuse *= shadow(pos, vec3(lightDir.xy, -lightDir.z));
+	#endif
+	vec3 col = vec3(0.0);
+	col += albedo * vec3(1.0, 0.9, 0.8) * diffuse;
+	col += albedo * fogColor * max(n.y * 0.5 + 0.5, 0.0) * 0.5;
+
+	// Shade water
+	if (t >= watert) {
+		float dist = t - watert;
+		vec3 wpos = rpos+rdir*watert;
+		col *= exp(-vec3(0.3, 0.15, 0.08)*dist);
+
+		float f = 1.0 - pow(1.0 - clamp(-rdir.y, 0.0, 1.0), 5.0);
+		vec3 refldir = rdir * vec2(-1.0, 1.0).yxy;
+		refldir = normalize(refldir + ns.xyz * 0.1);
+		vec3 refl = calculateFogColor(wpos, refldir);
+		col = mix(refl, col, f);
+	}
+
+	return mix(fogColor, col, fog);
+}
+/* ################### */
+
+float terrain_map(vec3 p) {
+	vec2 p0 = p.xz;
+	//p0 += 1.0;
+	//p0 /= 2.0;
+	return p.y - 100 * texture(depthTex, p0/iResolution.xy).r;
+}
+
+float map( vec3 p)
+{
+	float d_terrain = terrain_map(p);
+	return d_terrain;
+}
+
+float march(in vec3 ro, in vec3 rd)
+{
+	const float maxd = 900.0;
+	const float precis = 0.001;
+    float h = precis * 2.0;
+    float t = 0.0;
+	float res = -1.0;
+    for(int i = 0; i < 8; i++)
+    {
+        if(h < precis*t || t > maxd) break;
+	    h = map(ro + rd * t);
+        t += h;
+    }
+    if(t < maxd) res = t;
+    return res;
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+
+	vec2 uv = fragCoord.xy;// / iResolution.xy;
+	//uv = 2. * uv - 1.;
+	//uv.x *= iResolution.x/iResolution.y;
+
+	cameraOrigin = vec3(0.5 * iResolution.x, 0.91 * iResolution.y, z_pos * iResolution.y);
+	vec3 cameraTarget = vec3(uv.x, 0.0, uv.y);
+	vec3 cameraDir = normalize(cameraTarget - cameraOrigin);
+	rayDir = cameraDir;
+
+    float t = march(cameraOrigin, rayDir);
+    vec3 col = vec3(0);
+
+	if(t > -0.001)
+	{
+        vec3 pos = cameraOrigin + t * rayDir;
+        pos.y -= 120;
+        col = shade(cameraOrigin, rayDir, t, pos);
+        //float noise = mix(0, 1, pos.y/100);
+        //col = vec3(noise);
+	}
+
+	fragColor = vec4(pow(col, vec3(0.4545)), 1.0);
+}
+
+void main() {
+	vec4 color;
+	mainImage(color, gl_FragCoord.xy);
+
+	color.w = 1.0;
+	gl_FragColor = color;
+}
